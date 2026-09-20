@@ -48,12 +48,17 @@ private struct Preset {
 private let PRESET_BIG = Preset(font: FONT46, adv: { $0 == "1" ? 4 : 5 },
                                 bw: 18, bh: 10, capw: 20, gap: 5, ggap: 10, pad: 2, lblgap: 3, H: 12, dy: 3)
 private let PRESET_SMALL = Preset(font: FONT35, adv: { _ in 4 },
-                                  bw: 14, bh: 9, capw: 16, gap: 3, ggap: 7, pad: 1, lblgap: 2, H: 9, dy: 2)
+                                  // Compact menu-bar geometry: the 3x5 glyphs
+                                  // remain readable at Retina scale without
+                                  // competing with neighboring status icons.
+                                  bw: 12, bh: 7, capw: 14, gap: 2, ggap: 5, pad: 1, lblgap: 1, H: 7, dy: 1)
 
 let SIZE_FILE = "\(STATE_DIR)/.batt-size"
 func currentBattSize() -> String {
   let s = (try? String(contentsOfFile: SIZE_FILE, encoding: .utf8))?
     .trimmingCharacters(in: .whitespacesAndNewlines)
+  // Small is the quieter default for a crowded macOS menu bar. Choosing Big
+  // from Settings still persists and overrides this default.
   return s == "big" ? "big" : "small"
 }
 
@@ -104,15 +109,17 @@ private final class Canvas {
 
 // Actual macOS battery indicator colors (Apple HIG system colors)
 private func heatRemain(_ r: Double, dark: Bool) -> RGB {
-  if r <= 20 { return dark ? (255, 69, 58) : (255, 59, 48) } // systemRed
-  if r < 50 { return dark ? (255, 214, 10) : (255, 204, 0) } // systemYellow
-  return dark ? (48, 209, 88) : (52, 199, 89) // systemGreen
+  // Dark mode uses lower-saturation fills so the small batteries sit quietly
+  // in the menu bar instead of looking like bright notification lights.
+  if r <= 20 { return dark ? (126, 63, 60) : (255, 59, 48) }
+  if r < 50 { return dark ? (132, 111, 52) : (255, 204, 0) }
+  return dark ? (57, 112, 88) : (52, 199, 89)
 }
 
 // 100% remaining = golden battery (a two-tone gold distinct from the warning yellow)
 func isGolden(_ remain: Double?) -> Bool { (remain ?? 0) >= 99.5 }
-private func goldBase(_ dark: Bool) -> RGB { dark ? (255, 184, 0) : (255, 170, 0) }
-private func goldHi(_ dark: Bool) -> RGB { dark ? (255, 226, 110) : (255, 214, 90) }
+private func goldBase(_ dark: Bool) -> RGB { dark ? (145, 110, 42) : (255, 170, 0) }
+private func goldHi(_ dark: Bool) -> RGB { dark ? (191, 164, 86) : (255, 214, 90) }
 
 // Full span of the glint sweep — the length needed for the diagonal to fully cross the capsule
 func batteryGlintSpan() -> Int {
@@ -173,8 +180,9 @@ private func drawCapsule(_ cv: Canvas, _ p: Preset, _ x: Int, _ midY: Int,
   }
   let s = String(Int(v.rounded()))
   let tx = x + (p.bw - numW(p, s)) / 2
-  // Pixels over the fill (bright system color) get a dark number, over the empty background get ink → contrast is guaranteed everywhere
-  drawNum(cv, p, tx, midY - p.dy, s, ink, (30, 30, 30), x + 2 + fw)
+  // Dark mode fills are muted, so use a soft light number instead of harsh black.
+  let fillInk: RGB = dark ? (224, 238, 230) : (30, 30, 30)
+  drawNum(cv, p, tx, midY - p.dy, s, ink, fillInk, x + 2 + fw)
 }
 
 // Draw one cat frame into the canvas (shares ink with the batteries; accents fixed)
@@ -196,49 +204,78 @@ private func drawCat(_ cv: Canvas, _ x: Int, _ y: Int, _ style: CatStyle, _ stat
 
 // N capsules + group label (C/X) → NSImage (2x pixels; the caller scales down to the display size)
 // With `cat`, a pixel cat runs at the left edge, facing its battery "finish line".
+// Native macOS menu-bar treatment: system font, no pixel battery outlines.
+// Each percentage is a quiet inline status value, so the widget reads like a
+// first-party status item instead of a separate retro icon.
+// STANDARD UI (2026-09-20): the system menu bar's own font (same face and size
+// as the Apple clock — .AppleSystemUIFont 13pt), fixed width.
+// The status item must never resize as the numbers change, so the image width
+// is computed once from a worst-case template ("100" in every slot) and each
+// value is padded with FIGURE SPACE (U+2007, one digit wide in the system font)
+// so the glyphs sit in stable columns.
+// Change only through an explicit source edit and local rebuild.
+// Ask AppKit for the menu bar font rather than hard-coding a size, so the item
+// tracks the clock if the system type scale ever changes. Tabular figures are
+// layered on at the same size to keep the value columns from shifting.
+private var STANDARD_STATUS_FONT_SIZE: CGFloat { NSFont.menuBarFont(ofSize: 0).pointSize }
+private let STANDARD_STATUS_IMAGE_HEIGHT: CGFloat = 18 // < 22pt bar thickness, so AppKit never scales the image down
+private let FIGURE_SPACE = "\u{2007}"
+private let VALUE_SLOT_WIDTH = 3 // "100" — the widest value ever rendered
+
 func renderBatteryImage(dark: Bool, items: [BattItem], glintX: Int? = nil,
                         cat: CatState? = nil, catFrameIndex: Int = 0) -> NSImage? {
-  let p = currentBattSize() == "small" ? PRESET_SMALL : PRESET_BIG
-  let ink: RGB = dark ? (235, 235, 235) : (45, 45, 45)
-  let catStyle = currentCatStyle()
-  let catSpan = (cat != nil && catStyle != .none) ? CAT_W + 3 : 0
-  // Compute width (including group label)
-  var W = p.pad * 2 + catSpan
-  var pg: Character? = nil
+  // Match the neighboring macOS status items rather than using a tiny custom
+  // widget font; AppKit controls the type scale to match the native rhythm.
+  // Keep the native macOS system font, but deliberately use a compact scale
+  // so the status item stays subordinate to the other menu-bar controls.
+  let font = NSFont.monospacedDigitSystemFont(ofSize: STANDARD_STATUS_FONT_SIZE, weight: .regular)
+  let groupColor = dark ? NSColor(calibratedWhite: 0.82, alpha: 0.82)
+                        : NSColor(calibratedWhite: 0.28, alpha: 0.88)
+  let separatorColor = dark ? NSColor(calibratedWhite: 0.62, alpha: 0.42)
+                            : NSColor(calibratedWhite: 0.35, alpha: 0.45)
+
+  func valueColor(_ remain: Double?) -> NSColor {
+    let r = remain ?? 0
+    if r <= 20 { return dark ? NSColor(calibratedRed: 0.78, green: 0.38, blue: 0.36, alpha: 0.92)
+                              : NSColor.systemRed }
+    if r < 50 { return dark ? NSColor(calibratedRed: 0.72, green: 0.61, blue: 0.30, alpha: 0.92)
+                              : NSColor.systemOrange }
+    return dark ? NSColor(calibratedRed: 0.42, green: 0.72, blue: 0.61, alpha: 0.94)
+                : NSColor.systemGreen
+  }
+
+  // Every value occupies a fixed 3-column slot (figure spaces are digit-width),
+  // so 31 and 100 take exactly the same room and nothing shifts between ticks.
+  func slot(_ remain: Double?) -> String {
+    let raw = remain.map { String(Int($0.rounded())) } ?? "—"
+    let padCount = max(0, VALUE_SLOT_WIDTH - raw.count)
+    return String(repeating: FIGURE_SPACE, count: padCount) + raw
+  }
+
+  let result = NSMutableAttributedString(string: "")
+  var previousGroup: Character?
   for item in items {
-    let g = item.label.first!
-    if g != pg {
-      if pg != nil { W += p.ggap }
-      W += numW(p, String(g)) + p.lblgap
-      pg = g
-    } else { W += p.gap }
-    W += p.capw
+    let group = item.label.first!
+    if group != previousGroup {
+      if previousGroup != nil {
+        result.append(NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: separatorColor]))
+      }
+      result.append(NSAttributedString(string: String(group) + " ", attributes: [.font: font, .foregroundColor: groupColor]))
+      previousGroup = group
+    } else {
+      result.append(NSAttributedString(string: " ", attributes: [.font: font]))
+    }
+    result.append(NSAttributedString(string: slot(item.remain), attributes: [.font: font, .foregroundColor: valueColor(item.remain)]))
   }
-  let cv = Canvas(max(W, 8), p.H)
-  let midY = p.H / 2
-  var x = p.pad
-  if let c = cat, catStyle != .none {
-    drawCat(cv, x, max(0, (p.H - CAT_H) / 2), catStyle, c, catFrameIndex, ink)
-    x += catSpan
-  }
-  pg = nil
-  for item in items {
-    let g = item.label.first!
-    if g != pg {
-      if pg != nil { x += p.ggap }
-      drawNum(cv, p, x, midY - p.dy, String(g), ink) // group label C or X
-      x += numW(p, String(g)) + p.lblgap
-      pg = g
-    } else { x += p.gap }
-    drawCapsule(cv, p, x, midY, item.remain, ink, dark, glintX)
-    x += p.capw
-  }
-  guard let provider = CGDataProvider(data: Data(cv.buf) as CFData),
-        let cg = CGImage(width: cv.w, height: cv.h, bitsPerComponent: 8, bitsPerPixel: 32,
-                         bytesPerRow: cv.w * 4, space: CGColorSpaceCreateDeviceRGB(),
-                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
-                         provider: provider, decode: nil, shouldInterpolate: false,
-                         intent: .defaultIntent)
-  else { return nil }
-  return NSImage(cgImage: cg, size: NSSize(width: cv.w, height: cv.h))
+
+  let margin: CGFloat = 2
+  let bounds = result.boundingRect(with: NSSize(width: 1000, height: 40),
+                                   options: [.usesLineFragmentOrigin, .usesFontLeading])
+  let width = ceil(bounds.width) + margin * 2
+  let image = NSImage(size: NSSize(width: width, height: STANDARD_STATUS_IMAGE_HEIGHT))
+  image.lockFocus()
+  let y = (STANDARD_STATUS_IMAGE_HEIGHT - ceil(bounds.height)) / 2
+  result.draw(at: NSPoint(x: margin, y: y))
+  image.unlockFocus()
+  return image
 }
