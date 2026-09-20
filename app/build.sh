@@ -9,7 +9,7 @@ VERSION="$(cat ../VERSION)"
 
 echo "🔨 Compiling…"
 rm -rf "$APP" "$NAME"
-swiftc -O *.swift -o "$NAME" -framework Cocoa -framework ServiceManagement
+swiftc -O -target arm64-apple-macos12.0 *.swift -o "$NAME" -framework Cocoa -framework ServiceManagement
 
 echo "📦 Assembling .app bundle…"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

@@ -135,22 +135,10 @@ func buildMenu(_ snap: Snapshot, swiftBarDup: Bool, target: AppDelegate) -> NSMe
   }
 
   // ── footer ──
-  if snap.update.hasUpdate, let latest = snap.update.latest {
-    row(menu, trf("Install v%@ update — one click (current v%@)", latest, APP_VERSION),
-        color: "#28963f", action: #selector(AppDelegate.selfUpdate(_:)), target: target, repr: latest)
-  }
   row(menu, tr("Refresh"), action: #selector(AppDelegate.refresh), target: target, key: "r")
 
-  // Settings submenu — size · language · auto-start · shortcuts · version
+  // Settings submenu — fixed standard UI · language · auto-start · shortcuts · version
   let settings = NSMenu()
-  let sizeMenu = NSMenu()
-  let size = currentBattSize()
-  row(sizeMenu, tr("Big"), action: #selector(AppDelegate.setSizeBig), target: target,
-      state: size == "big" ? .on : .off)
-  row(sizeMenu, tr("Small"), action: #selector(AppDelegate.setSizeSmall), target: target,
-      state: size == "small" ? .on : .off)
-  row(settings, tr("Battery size")).submenu = sizeMenu
-
   let catMenu = NSMenu()
   let curCat = currentCatStyle()
   for (style, key) in [(CatStyle.none, "Off"), (.nyan, "Wide face"),
