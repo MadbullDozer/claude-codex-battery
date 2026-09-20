@@ -51,7 +51,7 @@ private func readClaudeToken() -> String? {
   if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
      let d = out as? Data,
      let obj = try? JSONSerialization.jsonObject(with: d),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty {
     cachedClaudeToken = t
     return t
   }
@@ -60,13 +60,13 @@ private func readClaudeToken() -> String? {
 #else
   if let raw = runCmd("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout: 3),
      let obj = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty {
     cachedClaudeToken = t
     return t
   }
   // For environments without a keychain — Claude Code's file-based credentials
   if let obj = readJSONFile("\(HOME)/.claude/.credentials.json"),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]) {
+     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty {
     cachedClaudeToken = t
     return t
   }
