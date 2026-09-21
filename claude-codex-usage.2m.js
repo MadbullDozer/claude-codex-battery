@@ -15,7 +15,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import zlib from "node:zlib";
 
 const HOME = homedir();
@@ -712,12 +712,20 @@ function readClaudeToken() {
   if (existsSync(`${CLAUDE_STATE_DIR}/.no-live`)) return null;
   try {
     if (process.platform !== "darwin") throw new Error("no keychain");
-    const raw = execSync(
-      'security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null',
-      { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    const t = JSON.parse(raw)?.claudeAiOauth?.accessToken;
-    if (t) return t;
+    // `-a` matters: several items can share this service (Claude Code writes one per
+    // account name, and stale ones hold an empty token). Without `-a`, `security`
+    // returns an arbitrary one of them — try this user's item first, then any.
+    const acctArgs = [`-a ${JSON.stringify(userInfo().username)} `, ""];
+    for (const acct of acctArgs) {
+      try {
+        const raw = execSync(
+          `security find-generic-password ${acct}-s "Claude Code-credentials" -w 2>/dev/null`,
+          { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] },
+        ).trim();
+        const t = JSON.parse(raw)?.claudeAiOauth?.accessToken;
+        if (t) return t;
+      } catch {}
+    }
   } catch {}
   try {
     // For environments without the Keychain item (e.g. manual migration) — file credentials
