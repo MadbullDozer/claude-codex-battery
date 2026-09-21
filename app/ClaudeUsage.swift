@@ -37,32 +37,46 @@ private var claudeTokenDeniedUntil: Int = 0
 
 func invalidateClaudeToken() { cachedClaudeToken = nil }
 
+private func parseClaudeToken(_ d: Data) -> String? {
+  guard let obj = try? JSONSerialization.jsonObject(with: d),
+        let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty else { return nil }
+  return t
+}
+
 private func readClaudeToken() -> String? {
   if liveDisabled() { return nil }
   if let t = cachedClaudeToken { return t }
   if Int(Date().timeIntervalSince1970) < claudeTokenDeniedUntil { return nil }
 #if MAS_BUILD
   // Sandboxed: query the Keychain item directly (user approves an access prompt once)
+  // Several items can share this service (Claude Code writes one per account name,
+  // and stale ones hold an empty token) — scan them all and take the first usable one.
   let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                           kSecAttrService as String: "Claude Code-credentials",
                           kSecReturnData as String: true,
-                          kSecMatchLimit as String: kSecMatchLimitOne]
+                          kSecMatchLimit as String: kSecMatchLimitAll]
   var out: CFTypeRef?
   if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-     let d = out as? Data,
-     let obj = try? JSONSerialization.jsonObject(with: d),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty {
-    cachedClaudeToken = t
-    return t
+     let items = out as? [Data] {
+    for d in items {
+      if let t = parseClaudeToken(d) {
+        cachedClaudeToken = t
+        return t
+      }
+    }
   }
   claudeTokenDeniedUntil = Int(Date().timeIntervalSince1970) + 3600
   return nil
 #else
-  if let raw = runCmd("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout: 3),
-     let obj = try? JSONSerialization.jsonObject(with: Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)),
-     let t = jstr(jd(jd(obj)?["claudeAiOauth"])?["accessToken"]), !t.isEmpty {
-    cachedClaudeToken = t
-    return t
+  // `-a` matters: without it `security` returns an arbitrary item among those sharing
+  // this service, which may be a stale stub holding an empty token.
+  for args in [["find-generic-password", "-a", NSUserName(), "-s", "Claude Code-credentials", "-w"],
+               ["find-generic-password", "-s", "Claude Code-credentials", "-w"]] {
+    if let raw = runCmd("/usr/bin/security", args, timeout: 3),
+       let t = parseClaudeToken(Data(raw.trimmingCharacters(in: .whitespacesAndNewlines).utf8)) {
+      cachedClaudeToken = t
+      return t
+    }
   }
   // For environments without a keychain — Claude Code's file-based credentials
   if let obj = readJSONFile("\(HOME)/.claude/.credentials.json"),
