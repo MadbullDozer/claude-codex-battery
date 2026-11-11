@@ -3,3 +3,7 @@
 .codex-refresh-ts
 windows/build/
 windows/*.exe
+
+.env
+.env.*
+!.env.example
